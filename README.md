@@ -28,7 +28,7 @@ name=loss3/prob, bindingIndex=1, buffers.size()=2
 Memory Read...Random Ok
 Average over 1 runs is 8.40288 ms (percentile time is 8.40288).
 name=loss3/prob, bindingIndex=1, buffers.size()=2
-Result [0] is : 0.95331853628158569335937500000000
-Result [1] is : 0.04668147489428520202636718750000
+Result [Normal] is : 0.95331853628158569335937500000000
+Result [Abnormal] is : 0.04668147489428520202636718750000
 
 ```
