@@ -38,17 +38,16 @@ using namespace nvonnxparser;
     }                                                   \
 }
 
-#define DIM_HW 1024*1024
-#define DIM_H  1024
-#define DIM_W  1024
 struct Params
 {
     std::string deployFile, modelFile, engine, calibrationCache{"CalibrationTable"};
     std::string uffFile;
     std::string onnxModelFile;
+    std::string testList;
+    std::string label;
     std::vector<std::string> outputs;
     std::vector<std::pair<std::string, Dims3> > uffInputs;
-    int device{ 7 }, batchSize{ 1 }, workspaceSize{ 32 }, iterations{ 1 }, avgRuns{ 1 };
+    int device{ 0 }, batchSize{ 1 }, workspaceSize{ 64 }, iterations{ 1 }, avgRuns{ 1 };
     bool fp16{ false }, int8{ false }, verbose{ false }, hostTime{ false };
     float pct{99};
 } gParams;
@@ -504,6 +503,7 @@ void doInference(ICudaEngine& engine, float* imgFloatData)
 
 	
     }
+    cudaDeviceSynchronize();
     /*CH-------------*/
     for (size_t i = 0; i < gParams.outputs.size(); i++)
 	getMemory(engine, buffers, gParams.outputs[i]);
@@ -541,6 +541,8 @@ static void printUsage()
     printf("  --hostTime           Measure host time rather than GPU time (default = false)\n");
     printf("  --engine=<file>      Generate a serialized TensorRT engine\n");
     printf("  --calib=<file>       Read INT8 calibration cache file.  Currently no support for ONNX model.\n");
+    printf("  --test=<file>        Read the test images from list.\n");
+    printf("  --label=<file>       Read the labels for image class.\n");
 
     fflush(stdout);
 }
@@ -617,6 +619,11 @@ bool parseArgs(int argc, char* argv[])
         if (parseString(argv[j], "calib", gParams.calibrationCache))
             continue;
 
+        if (parseString(argv[j], "test", gParams.testList))
+            continue;
+
+        if (parseString(argv[j], "label", gParams.label))
+            continue;
         std::string output;
         if (parseString(argv[j], "output", output))
         {
@@ -756,9 +763,9 @@ int main(int argc, char** argv)
     Dims3 dimensions = static_cast<Dims3&&>(engine->getBindingDimensions((int)bindingIndex));
     size_t eltCount = dimensions.d[0]*dimensions.d[1]*dimensions.d[2]*gParams.batchSize, memSize = eltCount * sizeof(float);
 
-    std::ifstream fileList("T.txt");
+    std::ifstream fileList(gParams.testList.c_str());
     std::string fileLine;
-
+    printf("File:%s\n",gParams.testList.c_str());
     float* imgRow=(float*)malloc(memSize);
 
     while (std::getline(fileList, fileLine))
@@ -775,7 +782,10 @@ int main(int argc, char** argv)
     	cv::Mat SrcImage;
     	SrcImage = cv::imread(imgFile, CV_LOAD_IMAGE_GRAYSCALE);
         if(!SrcImage.empty()) 
-		printf("Unable to decode image\n");
+		printf("Success to decode image\n");
+	else
+		printf("Success to decode image\n");
+
 		printf("Dim0: %d Dim1:%d Dim2:%d \n", dimensions.d[0],dimensions.d[1],dimensions.d[2]);
     	cv::Mat imgFloat;
 	
