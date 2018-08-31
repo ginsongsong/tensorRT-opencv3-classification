@@ -407,7 +407,7 @@ void createMemory(const ICudaEngine& engine, std::vector<void*>& buffers, const 
 
     delete[] localMem;
     buffers[bindingIndex] = deviceMem;
-    printf("Memory Read...Random Ok\n");
+    //printf("Memory Read...Random Ok\n");
 }
 
 void createMemorySetZero(const ICudaEngine& engine, std::vector<void*>& buffers, const std::string& name)
@@ -433,7 +433,7 @@ void createMemorySetZero(const ICudaEngine& engine, std::vector<void*>& buffers,
 
     delete[] localMem;
     buffers[bindingIndex] = deviceMem;
-    printf("Memory Read...Random Ok\n");
+    printf("Memory Set Zero... Ok\n");
 }
 
 void getMemory(const ICudaEngine& engine, std::vector<void*>& buffers, const std::string& name)
