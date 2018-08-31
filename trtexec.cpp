@@ -48,7 +48,7 @@ struct Params
     std::string onnxModelFile;
     std::vector<std::string> outputs;
     std::vector<std::pair<std::string, Dims3> > uffInputs;
-    int device{ 7 }, batchSize{ 1 }, workspaceSize{ 16 }, iterations{ 1 }, avgRuns{ 1 };
+    int device{ 7 }, batchSize{ 1 }, workspaceSize{ 32 }, iterations{ 1 }, avgRuns{ 1 };
     bool fp16{ false }, int8{ false }, verbose{ false }, hostTime{ false };
     float pct{99};
 } gParams;
@@ -457,12 +457,14 @@ void doInference(ICudaEngine& engine, float* imgFloatData)
     IExecutionContext *context = engine.createExecutionContext();
     // input and output buffer pointers that we pass to the engine - the engine requires exactly IEngine::getNbBindings(),
     // of these, but in this case we know that there is exactly one input and one output.
-
+	
+    //Create the input buffer for H2D 
     std::vector<void*> buffers(gInputs.size() + gParams.outputs.size());
     for (size_t i = 0; i < gInputs.size(); i++)
         createMemoryFromImage(engine, buffers, gInputs[i],imgFloatData);
         //createMemoryForImage(engine, buffers, gInputs[i],imgFloatData);
 
+    //Create the output buffer for H2D
     for (size_t i = 0; i < gParams.outputs.size(); i++)
         createMemorySetZero(engine, buffers, gParams.outputs[i]);
 
@@ -499,11 +501,12 @@ void doInference(ICudaEngine& engine, float* imgFloatData)
         }
         total /= gParams.avgRuns;
         std::cout << "Average over " << gParams.avgRuns << " runs is " << total << " ms (percentile time is " << percentile(gParams.pct, times) << ")." << std::endl;
-		/*CH-------------*/
-	    for (size_t i = 0; i < gParams.outputs.size(); i++)
-		getMemory(engine, buffers, gParams.outputs[i]);
+
 	
     }
+    /*CH-------------*/
+    for (size_t i = 0; i < gParams.outputs.size(); i++)
+	getMemory(engine, buffers, gParams.outputs[i]);
 
     cudaStreamDestroy(stream);
     cudaEventDestroy(start);
@@ -775,7 +778,7 @@ int main(int argc, char** argv)
 		printf("Unable to decode image\n");
 		printf("Dim0: %d Dim1:%d Dim2:%d \n", dimensions.d[0],dimensions.d[1],dimensions.d[2]);
     	cv::Mat imgFloat;
-    	SrcImage.convertTo(imgFloat, CV_32F , 1.0 / 255.0);
+    	SrcImage.convertTo(imgFloat, CV_32F );
         //imgFloat*=(float)1/255;
     	for(int x =0;x<dimensions.d[1];x++)
 	{
