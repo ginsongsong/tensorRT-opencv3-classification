@@ -3,12 +3,12 @@ TensorRT4.0 image classification using caffemodel
 
 Use TensorRT to Calculate the ROC or confusion matrix for diff precision INT8/FP16/FP32 in classification.
 
-#Install
+Install
 ```
 make
 ```
 
-#You can simply add the test list to giexec.
+You can simply add the test list to giexec.
 ```
 giexec --deploy=deploy.prototxt --model=xx.caffemodel --label=label.txt --test=test.txt
 
