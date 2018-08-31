@@ -778,15 +778,17 @@ int main(int argc, char** argv)
 		printf("Unable to decode image\n");
 		printf("Dim0: %d Dim1:%d Dim2:%d \n", dimensions.d[0],dimensions.d[1],dimensions.d[2]);
     	cv::Mat imgFloat;
+	
     	SrcImage.convertTo(imgFloat, CV_32F );
-        //imgFloat*=(float)1/255;
-    	for(int x =0;x<dimensions.d[1];x++)
+	for(int c =0; c < dimensions.d[0];c++)
 	{
-		for(int y=0; y< dimensions.d[2];y++)
-		{
+    		for(int h =0;h<dimensions.d[1];h++)
+		{	
+			for(int w=0; w< dimensions.d[2];w++)
+			{
 			
-			imgRow[ x*dimensions.d[1] + y ]=(float)imgFloat.at<float>(x,y);		
-			//printf("ImageDIM(%d,%d)= %f\n",x,y,imgRow[ x*dimensions.d[1] + y ]);
+				imgRow[ c*dimensions.d[1]*dimensions.d[2]+ h*dimensions.d[1] + w ]=(float)imgFloat.at<float>(h,w);		
+			}
 		}
 	}
     	doInference(*engine,imgRow);
