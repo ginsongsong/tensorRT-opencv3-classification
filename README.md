@@ -1,9 +1,9 @@
 # TensorRT-image-Classification-using-caffemodel
 TensorRT4.0 image classification using caffemodel
 
-Use TensorRT to Calculate the ROC or confusion matrix for diff precision INT8/FP16/FP32 in classification.
+Use TensorRT to Calculate the ROC or confusion matrix for diff precision INT8/FP16/FP32 classification.
 
-Install
+How to install
 ```
 make
 ```
