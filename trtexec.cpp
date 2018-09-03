@@ -47,9 +47,10 @@ struct Params
     std::string label;
     std::vector<std::string> outputs;
     std::vector<std::pair<std::string, Dims3> > uffInputs;
-    int device{ 0 }, batchSize{ 1 }, workspaceSize{ 64 }, iterations{ 1 }, avgRuns{ 1 };
+    int device{ 0 }, batchSize{ 1 }, workspaceSize{ 23 }, iterations{ 1 }, avgRuns{ 1 };
     bool fp16{ false }, int8{ false }, verbose{ false }, hostTime{ false };
     float pct{99};
+    //float pct{0};
 } gParams;
 
 static inline int volume(Dims3 dims)
@@ -105,11 +106,11 @@ public:
         , mCacheFile(cacheFile)
     {
         std::default_random_engine generator;
-        std::uniform_real_distribution<float> distribution(-1.0F, 1.0F);
+        std::uniform_real_distribution<float> distribution(-1.0F, 1.0F);//it will make the random data to calibrator model
         for(auto& elem: gInputDimensions)
         {
             int elemCount = volume(elem.second);
-
+	    printf("INT8 Calibrator Here..\n");
             std::vector<float> rnd_data(elemCount);
             for(auto& val: rnd_data)
                 val = distribution(generator);
@@ -217,12 +218,17 @@ ICudaEngine* caffeToTRTModel()
     // Build the engine
     builder->setMaxBatchSize(gParams.batchSize);
     builder->setMaxWorkspaceSize(size_t(gParams.workspaceSize)<<20);
-    builder->setFp16Mode(gParams.fp16);
+    if(gParams.fp16)
+    {
+    	builder->setFp16Mode(gParams.fp16);
+	printf("setFP16 to default Model...\n");
+    }
 
     RndInt8Calibrator calibrator(1, gParams.calibrationCache);
     if (gParams.int8)
     {
         builder->setInt8Mode(true);
+	printf("setINT8 to default Model...\n");
         builder->setInt8Calibrator(&calibrator);
     }
 
@@ -383,7 +389,7 @@ void createMemoryFromImage(const ICudaEngine& engine, std::vector<void*>& buffer
     buffers[bindingIndex] = deviceMem;
     printf("Memory Read...Image Ok\n");
 }
-
+/*
 void createMemory(const ICudaEngine& engine, std::vector<void*>& buffers, const std::string& name)
 {
     size_t bindingIndex = engine.getBindingIndex(name.c_str());
@@ -409,7 +415,7 @@ void createMemory(const ICudaEngine& engine, std::vector<void*>& buffers, const 
     buffers[bindingIndex] = deviceMem;
     //printf("Memory Read...Random Ok\n");
 }
-
+*/
 void createMemorySetZero(const ICudaEngine& engine, std::vector<void*>& buffers, const std::string& name)
 {
     size_t bindingIndex = engine.getBindingIndex(name.c_str());
@@ -448,7 +454,7 @@ void getMemory(const ICudaEngine& engine, std::vector<void*>& buffers, const std
     CHECK(cudaMemcpy(localMem, buffers[bindingIndex], memSize, cudaMemcpyDeviceToHost));
 
     for(int x = 0; x < eltCount ; x++)
-         printf("Result [%d] is : %.32f\n",x, localMem[x] );
+         printf("Result [%d] is : %.23f\n",x, localMem[x] );
     delete[] localMem;
 }
 void doInference(ICudaEngine& engine, float* imgFloatData)
@@ -546,7 +552,11 @@ static void printUsage()
 
     fflush(stdout);
 }
-
+void MemSet(float* SrcMem, int Size)
+{
+	for( int x =0 ; x < Size; x++)
+		SrcMem[x]=0.0f;
+}
 bool parseString(const char* arg, const char* name, std::string& value)
 {
     size_t n = strlen(name);
@@ -770,6 +780,7 @@ int main(int argc, char** argv)
 
     while (std::getline(fileList, fileLine))
     {
+	MemSet(imgRow,eltCount);
     	std::string imgFile;
 		std::istringstream getFile(fileLine);
 
@@ -784,7 +795,7 @@ int main(int argc, char** argv)
         if(!SrcImage.empty()) 
 		printf("Success to decode image\n");
 	else
-		printf("Success to decode image\n");
+		printf("Fail to decode image\n");
 
 		printf("Dim0: %d Dim1:%d Dim2:%d \n", dimensions.d[0],dimensions.d[1],dimensions.d[2]);
     	cv::Mat imgFloat;
@@ -798,6 +809,7 @@ int main(int argc, char** argv)
 			{
 			
 				imgRow[ c*dimensions.d[1]*dimensions.d[2]+ h*dimensions.d[1] + w ]=(float)imgFloat.at<float>(h,w);		
+				//printf("File %s (C,H,W) -> (%d,%d,%d)= %f \n",imgFile.c_str(),c,h,w,imgRow[ c*dimensions.d[1]*dimensions.d[2]+ h*dimensions.d[1] + w ]);
 			}
 		}
 	}
