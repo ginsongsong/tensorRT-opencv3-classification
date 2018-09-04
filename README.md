@@ -3,8 +3,60 @@ TensorRT4.0 image classification using caffemodel
 
 Use TensorRT to Calculate the ROC or confusion matrix for diff precision INT8/FP16/FP32 classification.
 
+Preinstall the NVIDIA driver and docker-ce and nvdocker2 in ubuntu16.04
+``
+#disable nouveau and update kernel
+sudo echo "blacklist nouveau" >> /etc/modprob.d/nv-disable-nouveau.conf
+sudo echo "options nouveau" >> /etc/modprob.d/nv-disable-nouveau.conf
+sudo update-initramfs -u
+sudo bash cuda-x.x.run --no-opengl-libs
+#if you are using the CUDA toolkit
+sudo echo "PATH=$PATH:/usr/local/cuda/bin" >> /etc/bash.bashrc
+sudo echo "LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda/bin" >> /etc/bash.bashrc
+source /etc/bash.bashrc
+#install the docker-ce version of 17.12.1 in sys
+ *** 18.06.1~ce~3-0~ubuntu 
+     18.06.0~ce~3-0~ubuntu    
+     18.03.1~ce-0~ubuntu 
+     18.03.0~ce-0~ubuntu 
+     17.12.1~ce-0~ubuntu 
+     17.12.0~ce-0~ubuntu 
+     17.09.1~ce-0~ubuntu 
+     17.09.0~ce-0~ubuntu 
+     17.06.2~ce-0~ubuntu
+     17.06.1~ce-0~ubuntu  
+     17.06.0~ce-0~ubuntu 
+     17.03.3~ce-0~ubuntu-xenial 
+     17.03.2~ce-0~ubuntu-xenial 
+     17.03.1~ce-0~ubuntu-xenial 
+     17.03.0~ce-0~ubuntu-xenial 
+***   
+sudo bash preinstall.sh
+
+```
+
+
+Pull the image from nvidia ngc site:
+```
+docker login nvcr.io
+Username: $oauthtoken
+Password: <Your Key generating from NGC>
+docker pull nvcr.io/nvidia/tensorrt:18.08-py3
+``
+Login to you container
+```
+nvidia-docker run -it  -v /home/ginsongsong/Shared/:/Model nvcr.io/nvidia/tensorrt:18.08-py3
+
+```
+
 How to install
 ```
+cd /Model
+wget https://github.com/opencv/opencv/archive/3.4.0.zip
+CMAKE_INSTALL_PREFIX=/Model/cv3
+make -j$(nproc) && make install
+#put the source code in /Model dir
+cd /Model/trtexec
 make
 ```
 
