@@ -454,7 +454,13 @@ void getMemory(const ICudaEngine& engine, std::vector<void*>& buffers, const std
     CHECK(cudaMemcpy(localMem, buffers[bindingIndex], memSize, cudaMemcpyDeviceToHost));
 
     for(int x = 0; x < eltCount ; x++)
+	if(!(gParams.fp16 || gParams.int8))
          printf("Result [%d] is : %.23f\n",x, localMem[x] );
+	else if(gParams.fp16)
+         printf("Result [%d] is : %.10f\n",x, localMem[x] );
+	else if(gParams.int8)
+         printf("Result [%d] is : %.8f\n",x, localMem[x] );
+
     delete[] localMem;
 }
 void doInference(ICudaEngine& engine, float* imgFloatData)
