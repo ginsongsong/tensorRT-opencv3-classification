@@ -41,7 +41,11 @@ How to install
 ```
 cd /Model
 wget https://github.com/opencv/opencv/archive/3.4.0.zip
-CMAKE_INSTALL_PREFIX=/Model/cv3
+apt-get install cmake -y
+unzip 3.4.0.zip
+cd opencv-3.4.0
+mkdir build && cd build
+cmake CMAKE_INSTALL_PREFIX=/Model/cv3 ..
 make -j$(nproc) && make install
 #put the source code in /Model dir
 cd /Model/trtexec
