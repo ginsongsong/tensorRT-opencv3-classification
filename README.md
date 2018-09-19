@@ -50,6 +50,7 @@ make -j$(nproc) && make install
 #put the source code in /Model dir
 cd /Model/trtexec
 make
+cp /workspace/tensorrt/sample/trtexec/giexec ./
 ```
 
 You can simply add the test list to giexec.
