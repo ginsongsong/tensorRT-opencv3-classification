@@ -1,67 +1,71 @@
-#include <assert.h>
-#include <fstream>
-#include <sstream>
-#include <iostream>
-#include <cmath>
-#include <sys/stat.h>
-#include <cmath>
-#include <time.h>
-#include <cuda_runtime_api.h>
 #include <algorithm>
+#include <cassert>
 #include <chrono>
-#include <string.h>
-#include <vector>
+#include <cmath>
+#include <cuda_runtime_api.h>
+#include <fstream>
+#include <functional>
+#include <iostream>
+#include <iterator>
 #include <map>
 #include <random>
-#include <iterator>
+#include <sstream>
+#include <string.h>
+#include <sys/stat.h>
+#include <time.h>
+#include <vector>
 
-#include <string>
-#include <opencv2/core.hpp>
-#include <opencv2/imgcodecs.hpp>
-#include <opencv2/highgui.hpp>
-
-#include "NvInfer.h"
-#include "NvCaffeParser.h"
-#include "NvUffParser.h"
+// ONNX is not supported in Windows
+#ifndef _MSC_VER
 #include "NvOnnxParser.h"
-#include "NvOnnxConfig.h"
+#endif
+#include "NvCaffeParser.h"
+#include "NvInfer.h"
+#include "NvInferPlugin.h"
+#include "NvUffParser.h"
+
+#include "common.h"
+
 using namespace nvinfer1;
 using namespace nvcaffeparser1;
 using namespace nvuffparser;
+// ONNX is not supported in Windows
+#ifndef _MSC_VER
 using namespace nvonnxparser;
-#define CHECK(status)                                   \
-{                                                       \
-    if (status != 0)                                    \
-    {                                                   \
-        std::cout << "Cuda failure: " << status;        \
-        abort();                                        \
-    }                                                   \
-}
+#endif
 
 struct Params
 {
-    std::string deployFile, modelFile, engine, calibrationCache{"CalibrationTable"};
+    std::string deployFile;
+    std::string modelFile;
+    std::string engine;
+    std::string calibrationCache{"CalibrationTable"};
     std::string uffFile;
     std::string onnxModelFile;
-    std::string testList;
-    std::string label;
+    std::vector<std::string> inputs;
     std::vector<std::string> outputs;
-    std::vector<std::pair<std::string, Dims3> > uffInputs;
-    int device{ 0 }, batchSize{ 1 }, workspaceSize{ 23 }, iterations{ 1 }, avgRuns{ 1 };
-    bool fp16{ false }, int8{ false }, verbose{ false }, hostTime{ false };
+    std::vector<std::pair<std::string, Dims3>> uffInputs;
+    int device{0};
+    int batchSize{1};
+    int workspaceSize{16};
+    int iterations{10};
+    int avgRuns{10};
+    int useDLACore{-1};
+    bool fp16{false};
+    bool int8{false};
+    bool verbose{false};
+    bool allowGPUFallback{false};
     float pct{99};
-    //float pct{0};
 } gParams;
 
-static inline int volume(Dims3 dims)
+inline int volume(Dims dims)
 {
-    return dims.d[0]*dims.d[1]*dims.d[2];
+    return std::accumulate(dims.d, dims.d + dims.nbDims, 1, std::multiplies<int>());
 }
 
-std::vector<std::string> gInputs;
 std::map<std::string, Dims3> gInputDimensions;
 
-std::vector<std::string> split(const std::string &s, char delim)
+std::vector<std::string> split(const std::string& s, char delim)
 {
     std::vector<std::string> res;
     std::stringstream ss;
@@ -77,17 +81,17 @@ std::vector<std::string> split(const std::string &s, char delim)
 float percentile(float percentage, std::vector<float>& times)
 {
     int all = static_cast<int>(times.size());
-    int exclude = static_cast<int>((1 - percentage/100) * all);
-    if (0 <= exclude && exclude < all)
+    int exclude = static_cast<int>((1 - percentage / 100) * all);
+    if (0 <= exclude && exclude <= all)
     {
         std::sort(times.begin(), times.end());
-        return times[all - 1 - exclude];
+        return times[all == exclude ? 0 : all - 1 - exclude];
     }
     return std::numeric_limits<float>::infinity();
 }
 
 // Logger for TensorRT info/warning/errors
-class Logger : public ILogger
+class iLogger : public ILogger
 {
     void log(Severity severity, const char* msg) override
     {
@@ -106,16 +110,16 @@ public:
         , mCacheFile(cacheFile)
     {
         std::default_random_engine generator;
-        std::uniform_real_distribution<float> distribution(-1.0F, 1.0F);//it will make the random data to calibrator model
-        for(auto& elem: gInputDimensions)
+        std::uniform_real_distribution<float> distribution(-1.0F, 1.0F);
+        for (auto& elem : gInputDimensions)
         {
             int elemCount = volume(elem.second);
-	    printf("INT8 Calibrator Here..\n");
+
             std::vector<float> rnd_data(elemCount);
-            for(auto& val: rnd_data)
+            for (auto& val : rnd_data)
                 val = distribution(generator);
 
-            void * data;
+            void* data;
             CHECK(cudaMalloc(&data, elemCount * sizeof(float)));
             CHECK(cudaMemcpy(data, &rnd_data[0], elemCount * sizeof(float), cudaMemcpyHostToDevice));
 
@@ -125,7 +129,7 @@ public:
 
     ~RndInt8Calibrator()
     {
-        for(auto& elem: mInputDeviceBuffers)
+        for (auto& elem : mInputDeviceBuffers)
             CHECK(cudaFree(elem.second));
     }
 
@@ -139,7 +143,7 @@ public:
         if (mCurrentSample >= mTotalSamples)
             return false;
 
-        for(int i = 0; i < nbBindings; ++i)
+        for (int i = 0; i < nbBindings; ++i)
             bindings[i] = mInputDeviceBuffers[names[i]];
 
         ++mCurrentSample;
@@ -158,7 +162,7 @@ public:
         return length ? &mCalibrationCache[0] : nullptr;
     }
 
-    virtual void writeCalibrationCache(const void* cache, size_t length) override
+    virtual void writeCalibrationCache(const void*, size_t) override
     {
     }
 
@@ -170,6 +174,26 @@ private:
     std::vector<char> mCalibrationCache;
 };
 
+void configureBuilder(IBuilder* builder, RndInt8Calibrator& calibrator)
+{
+    builder->setMaxBatchSize(gParams.batchSize);
+    builder->setMaxWorkspaceSize(gParams.workspaceSize << 20);
+    builder->setFp16Mode(gParams.fp16);
+
+    if (gParams.int8)
+    {
+        builder->setInt8Mode(true);
+        builder->setInt8Calibrator(&calibrator);
+    }
+
+    if (gParams.useDLACore >= 0)
+    {
+        builder->setDefaultDeviceType(DeviceType::kDLA);
+        builder->setDLACore(gParams.useDLACore);
+        if (gParams.allowGPUFallback)
+            builder->allowGPUFallback(true);
+    }
+}
 
 ICudaEngine* caffeToTRTModel()
 {
@@ -182,8 +206,7 @@ ICudaEngine* caffeToTRTModel()
     const IBlobNameToTensor* blobNameToTensor = parser->parse(gParams.deployFile.c_str(),
                                                               gParams.modelFile.empty() ? 0 : gParams.modelFile.c_str(),
                                                               *network,
-                                                              gParams.fp16 ? DataType::kHALF:DataType::kFLOAT);
-
+                                                              gParams.fp16 ? DataType::kHALF : DataType::kFLOAT);
 
     if (!blobNameToTensor)
         return nullptr;
@@ -191,10 +214,9 @@ ICudaEngine* caffeToTRTModel()
     for (int i = 0, n = network->getNbInputs(); i < n; i++)
     {
         Dims3 dims = static_cast<Dims3&&>(network->getInput(i)->getDimensions());
-        gInputs.push_back(network->getInput(i)->getName());
+        gParams.inputs.push_back(network->getInput(i)->getName());
         gInputDimensions.insert(std::make_pair(network->getInput(i)->getName(), dims));
-        std::cout << "Input \"" << network->getInput(i)->getName() << "\": " << dims.d[0] << "x" << dims.d[1] << "x" <<
-        dims.d[2] << std::endl;
+        std::cout << "Input \"" << network->getInput(i)->getName() << "\": " << dims.d[0] << "x" << dims.d[1] << "x" << dims.d[2] << std::endl;
     }
 
     // specify which tensors are outputs
@@ -212,25 +234,12 @@ ICudaEngine* caffeToTRTModel()
     {
         Dims3 dims = static_cast<Dims3&&>(network->getOutput(i)->getDimensions());
         std::cout << "Output \"" << network->getOutput(i)->getName() << "\": " << dims.d[0] << "x" << dims.d[1] << "x"
-        << dims.d[2] << std::endl;
+                  << dims.d[2] << std::endl;
     }
 
     // Build the engine
-    builder->setMaxBatchSize(gParams.batchSize);
-    builder->setMaxWorkspaceSize(size_t(gParams.workspaceSize)<<20);
-    if(gParams.fp16)
-    {
-    	builder->setFp16Mode(gParams.fp16);
-	printf("setFP16 to default Model...\n");
-    }
-
     RndInt8Calibrator calibrator(1, gParams.calibrationCache);
-    if (gParams.int8)
-    {
-        builder->setInt8Mode(true);
-	printf("setINT8 to default Model...\n");
-        builder->setInt8Calibrator(&calibrator);
-    }
+    configureBuilder(builder, calibrator);
 
     ICudaEngine* engine = builder->buildCudaEngine(*network);
     if (engine == nullptr)
@@ -271,27 +280,19 @@ ICudaEngine* uffToTRTModel()
         }
     }
 
-    if (!parser->parse(gParams.uffFile.c_str(), *network, gParams.fp16 ? DataType::kHALF:DataType::kFLOAT))
+    if (!parser->parse(gParams.uffFile.c_str(), *network, gParams.fp16 ? DataType::kHALF : DataType::kFLOAT))
         return nullptr;
 
     for (int i = 0, n = network->getNbInputs(); i < n; i++)
     {
         Dims3 dims = static_cast<Dims3&&>(network->getInput(i)->getDimensions());
-        gInputs.push_back(network->getInput(i)->getName());
+        gParams.inputs.push_back(network->getInput(i)->getName());
         gInputDimensions.insert(std::make_pair(network->getInput(i)->getName(), dims));
     }
 
     // Build the engine
-    builder->setMaxBatchSize(gParams.batchSize);
-    builder->setMaxWorkspaceSize(gParams.workspaceSize<<20);
-    builder->setFp16Mode(gParams.fp16);
-
     RndInt8Calibrator calibrator(1, gParams.calibrationCache);
-    if (gParams.int8)
-    {
-        builder->setInt8Mode(true);
-        builder->setInt8Calibrator(&calibrator);
-    }
+    configureBuilder(builder, calibrator);
 
     ICudaEngine* engine = builder->buildCudaEngine(*network);
     if (engine == nullptr)
@@ -302,38 +303,28 @@ ICudaEngine* uffToTRTModel()
     builder->destroy();
     return engine;
 }
-
+// ONNX is not supported in Windows
+#ifndef _MSC_VER
 ICudaEngine* onnxToTRTModel()
 {
+    int verbosity = (int) nvinfer1::ILogger::Severity::kWARNING;
+
     // create the builder
     IBuilder* builder = createInferBuilder(gLogger);
-
-    // create onnx config file
-    nvonnxparser::IOnnxConfig* config = nvonnxparser::createONNXConfig();
-    config->setModelFileName(gParams.onnxModelFile.c_str());
+    nvinfer1::INetworkDefinition* network = builder->createNetwork();
 
     // parse the onnx model to populate the network, then set the outputs
-    nvonnxparser::IONNXParser* parser = nvonnxparser::createONNXParser(*config);
-
-    if (!parser->parse(gParams.onnxModelFile.c_str(), DataType::kFLOAT))
+    IParser* parser = nvonnxparser::createParser(*network, gLogger);
+    if (!parser->parseFromFile(gParams.onnxModelFile.c_str(), verbosity))
     {
         std::cout << "failed to parse onnx file" << std::endl;
         return nullptr;
     }
 
-    // Retrieve the network definition from parser
-    if (!parser->convertToTRTNetwork())
-    {
-        std::cout << "failed to convert onnx network into TRT network" << std::endl;
-        return nullptr;
-    }
-
-    nvinfer1::INetworkDefinition* network = parser->getTRTNetwork();
-
     for (int i = 0, n = network->getNbInputs(); i < n; i++)
     {
         Dims3 dims = static_cast<Dims3&&>(network->getInput(i)->getDimensions());
-        gInputs.push_back(network->getInput(i)->getName());
+        gParams.inputs.push_back(network->getInput(i)->getName());
         gInputDimensions.insert(std::make_pair(network->getInput(i)->getName(), dims));
     }
 
@@ -343,9 +334,8 @@ ICudaEngine* onnxToTRTModel()
     }
 
     // Build the engine
-    builder->setMaxBatchSize(gParams.batchSize);
-    builder->setMaxWorkspaceSize(gParams.workspaceSize<<20);
-    builder->setFp16Mode(gParams.fp16);
+    RndInt8Calibrator calibrator(1, gParams.calibrationCache);
+    configureBuilder(builder, calibrator);
 
     ICudaEngine* engine = builder->buildCudaEngine(*network);
 
@@ -360,124 +350,48 @@ ICudaEngine* onnxToTRTModel()
     builder->destroy();
     return engine;
 }
-void createMemoryFromImage(const ICudaEngine& engine, std::vector<void*>& buffers, const std::string& name,float* imgFloatData)
-{
-    size_t bindingIndex = engine.getBindingIndex(name.c_str());
-    printf("name=%s, bindingIndex=%d, buffers.size()=%d\n", name.c_str(), (int)bindingIndex, (int)buffers.size());
-    assert(bindingIndex < buffers.size());
-    Dims3 dimensions = static_cast<Dims3&&>(engine.getBindingDimensions((int)bindingIndex));
-    size_t eltCount = dimensions.d[0]*dimensions.d[1]*dimensions.d[2]*gParams.batchSize, memSize = eltCount * sizeof(float);
-    float* localMem = new float[eltCount];
-    for (size_t i = 0; i < eltCount; i++)
-        {	
+#endif
 
-		//localMem[i] = (float(rand()) / RAND_MAX) * 2 - 1;
-		localMem[i] = imgFloatData[i];
-		//printf("ImageData %f\n",localMem[i]);
-	}
-
-    void* deviceMem;
-    CHECK(cudaMalloc(&deviceMem, memSize));
-    if (deviceMem == nullptr)
-    {
-        std::cerr << "Out of memory" << std::endl;
-        exit(1);
-    }
-    CHECK(cudaMemcpy(deviceMem, localMem, memSize, cudaMemcpyHostToDevice));
-
-    delete[] localMem;
-    buffers[bindingIndex] = deviceMem;
-    printf("Memory Read...Image Ok\n");
-}
-/*
 void createMemory(const ICudaEngine& engine, std::vector<void*>& buffers, const std::string& name)
 {
-    size_t bindingIndex = engine.getBindingIndex(name.c_str());
-    printf("name=%s, bindingIndex=%d, buffers.size()=%d\n", name.c_str(), (int)bindingIndex, (int)buffers.size());
-    assert(bindingIndex < buffers.size());
-    Dims3 dimensions = static_cast<Dims3&&>(engine.getBindingDimensions((int)bindingIndex));
-    size_t eltCount = dimensions.d[0]*dimensions.d[1]*dimensions.d[2]*gParams.batchSize, memSize = eltCount * sizeof(float);
+    const int bindingIndex = engine.getBindingIndex(name.c_str());
+    printf("name=%s, bindingIndex=%d, buffers.size()=%d\n", name.c_str(), bindingIndex, (int) buffers.size());
+    assert((bindingIndex < (int) buffers.size()) && "Input/output name not found in network");
 
-    float* localMem = new float[eltCount];
+    const Dims dims = engine.getBindingDimensions((int) bindingIndex);
+    const size_t eltCount = volume(dims) * gParams.batchSize;
+    const size_t memSize = eltCount * sizeof(float);
+
+    // Init host memory with random values
+    std::vector<float> localMem(eltCount);
     for (size_t i = 0; i < eltCount; i++)
         localMem[i] = (float(rand()) / RAND_MAX) * 2 - 1;
 
+    // Alloc and copy host values to device
     void* deviceMem;
     CHECK(cudaMalloc(&deviceMem, memSize));
     if (deviceMem == nullptr)
     {
-        std::cerr << "Out of memory" << std::endl;
+        std::cerr << "Out of memory allocating bytes: " << memSize << std::endl;
         exit(1);
     }
-    CHECK(cudaMemcpy(deviceMem, localMem, memSize, cudaMemcpyHostToDevice));
+    CHECK(cudaMemcpy(deviceMem, localMem.data(), memSize, cudaMemcpyHostToDevice));
 
-    delete[] localMem;
     buffers[bindingIndex] = deviceMem;
-    //printf("Memory Read...Random Ok\n");
-}
-*/
-void createMemorySetZero(const ICudaEngine& engine, std::vector<void*>& buffers, const std::string& name)
-{
-    size_t bindingIndex = engine.getBindingIndex(name.c_str());
-    printf("name=%s, bindingIndex=%d, buffers.size()=%d\n", name.c_str(), (int)bindingIndex, (int)buffers.size());
-    assert(bindingIndex < buffers.size());
-    Dims3 dimensions = static_cast<Dims3&&>(engine.getBindingDimensions((int)bindingIndex));
-    size_t eltCount = dimensions.d[0]*dimensions.d[1]*dimensions.d[2]*gParams.batchSize, memSize = eltCount * sizeof(float);
-
-    float* localMem = new float[eltCount];
-    for (size_t i = 0; i < eltCount; i++)
-        localMem[i] = 0;
-
-    void* deviceMem;
-    CHECK(cudaMalloc(&deviceMem, memSize));
-    if (deviceMem == nullptr)
-    {
-        std::cerr << "Out of memory" << std::endl;
-        exit(1);
-    }
-    CHECK(cudaMemcpy(deviceMem, localMem, memSize, cudaMemcpyHostToDevice));
-
-    delete[] localMem;
-    buffers[bindingIndex] = deviceMem;
-    printf("Memory Set Zero... Ok\n");
 }
 
-void getMemory(const ICudaEngine& engine, std::vector<void*>& buffers, const std::string& name)
+void doInference(ICudaEngine& engine)
 {
-    size_t bindingIndex = engine.getBindingIndex(name.c_str());
-    printf("name=%s, bindingIndex=%d, buffers.size()=%d\n", name.c_str(), (int)bindingIndex, (int)buffers.size());
-    assert(bindingIndex < buffers.size());
-    Dims3 dimensions = static_cast<Dims3&&>(engine.getBindingDimensions((int)bindingIndex));
-    size_t eltCount = dimensions.d[0]*dimensions.d[1]*dimensions.d[2]*gParams.batchSize, memSize = eltCount * sizeof(float);
-    float* localMem = new float[eltCount];
-
-    CHECK(cudaMemcpy(localMem, buffers[bindingIndex], memSize, cudaMemcpyDeviceToHost));
-
-    for(int x = 0; x < eltCount ; x++)
-	if(!(gParams.fp16 || gParams.int8))
-         printf("Result [%d] is : %.23f\n",x, localMem[x] );
-	else if(gParams.fp16)
-         printf("Result [%d] is : %.10f\n",x, localMem[x] );
-	else if(gParams.int8)
-         printf("Result [%d] is : %.8f\n",x, localMem[x] );
-
-    delete[] localMem;
-}
-void doInference(ICudaEngine& engine, float* imgFloatData)
-{
-    IExecutionContext *context = engine.createExecutionContext();
+    IExecutionContext* context = engine.createExecutionContext();
     // input and output buffer pointers that we pass to the engine - the engine requires exactly IEngine::getNbBindings(),
     // of these, but in this case we know that there is exactly one input and one output.
-	
-    //Create the input buffer for H2D 
-    std::vector<void*> buffers(gInputs.size() + gParams.outputs.size());
-    for (size_t i = 0; i < gInputs.size(); i++)
-        createMemoryFromImage(engine, buffers, gInputs[i],imgFloatData);
-        //createMemoryForImage(engine, buffers, gInputs[i],imgFloatData);
 
-    //Create the output buffer for H2D
+    std::vector<void*> buffers(gParams.inputs.size() + gParams.outputs.size());
+    for (size_t i = 0; i < gParams.inputs.size(); i++)
+        createMemory(engine, buffers, gParams.inputs[i]);
+
     for (size_t i = 0; i < gParams.outputs.size(); i++)
-        createMemorySetZero(engine, buffers, gParams.outputs[i]);
+        createMemory(engine, buffers, gParams.outputs[i]);
 
     cudaStream_t stream;
     CHECK(cudaStreamCreate(&stream));
@@ -488,37 +402,27 @@ void doInference(ICudaEngine& engine, float* imgFloatData)
     std::vector<float> times(gParams.avgRuns);
     for (int j = 0; j < gParams.iterations; j++)
     {
-        float total = 0, ms;
+        float totalGpu{0}, totalHost{0}; // GPU and Host timers
         for (int i = 0; i < gParams.avgRuns; i++)
         {
-            if (gParams.hostTime)
-            {
-                auto tStart = std::chrono::high_resolution_clock::now();
-                context->execute(gParams.batchSize, &buffers[0]);
-                auto tEnd = std::chrono::high_resolution_clock::now();
-                ms = std::chrono::duration<float, std::milli>(tEnd - tStart).count();
-            }
-            else
-            {
-                cudaEventRecord(start, stream);
-                //context->enqueue(gParams.batchSize, &buffers[0], stream, nullptr);
-                context->enqueue(gParams.batchSize, &buffers[0], stream, nullptr);
-                cudaEventRecord(end, stream);
-                cudaEventSynchronize(end);
-                cudaEventElapsedTime(&ms, start, end);
-            }
-            times[i] = ms;
-            total += ms;
-        }
-        total /= gParams.avgRuns;
-        std::cout << "Average over " << gParams.avgRuns << " runs is " << total << " ms (percentile time is " << percentile(gParams.pct, times) << ")." << std::endl;
+            auto tStart = std::chrono::high_resolution_clock::now();
+            cudaEventRecord(start, stream);
+            context->enqueue(gParams.batchSize, &buffers[0], stream, nullptr);
+            cudaEventRecord(end, stream);
+            cudaEventSynchronize(end);
 
-	
+            auto tEnd = std::chrono::high_resolution_clock::now();
+            totalHost += std::chrono::duration<float, std::milli>(tEnd - tStart).count();
+            float ms;
+            cudaEventElapsedTime(&ms, start, end);
+            times[i] = ms;
+            totalGpu += ms;
+        }
+        totalGpu /= gParams.avgRuns;
+        totalHost /= gParams.avgRuns;
+        std::cout << "Average over " << gParams.avgRuns << " runs is " << totalGpu << " ms (host walltime is " << totalHost
+                  << " ms, " << static_cast<int>(gParams.pct) << "\% percentile time is " << percentile(gParams.pct, times) << ")." << std::endl;
     }
-    cudaDeviceSynchronize();
-    /*CH-------------*/
-    for (size_t i = 0; i < gParams.outputs.size(); i++)
-	getMemory(engine, buffers, gParams.outputs[i]);
 
     cudaStreamDestroy(stream);
     cudaEventDestroy(start);
@@ -539,30 +443,25 @@ static void printUsage()
 
     printf("\nOptional params:\n");
 
-    printf("  --uffInput=<name>,C,H,W Input blob names along with their dimensions for UFF parser\n");
-    printf("  --model=<file>       Caffe model file (default = no model, random weights used)\n");
-    printf("  --batch=N            Set batch size (default = %d)\n", gParams.batchSize);
-    printf("  --device=N           Set cuda device to N (default = %d)\n", gParams.device);
-    printf("  --iterations=N       Run N iterations (default = %d)\n", gParams.iterations);
-    printf("  --avgRuns=N          Set avgRuns to N - perf is measured as an average of avgRuns (default=%d)\n", gParams.avgRuns);
-    printf("  --percentile=P       For each iteration, report the percentile time at P percentage (0<P<=100, default = %.1f%%)\n", gParams.pct);
-    printf("  --workspace=N        Set workspace size in megabytes (default = %d)\n", gParams.workspaceSize);
-    printf("  --fp16               Run in fp16 mode (default = false). Permits 16-bit kernels\n");
-    printf("  --int8               Run in int8 mode (default = false). Currently no support for ONNX model.\n");
-    printf("  --verbose            Use verbose logging (default = false)\n");
-    printf("  --hostTime           Measure host time rather than GPU time (default = false)\n");
-    printf("  --engine=<file>      Generate a serialized TensorRT engine\n");
-    printf("  --calib=<file>       Read INT8 calibration cache file.  Currently no support for ONNX model.\n");
-    printf("  --test=<file>        Read the test images from list.\n");
-    printf("  --label=<file>       Read the labels for image class.\n");
-
+    printf("  --uffInput=<name>,C,H,W Input blob name and its dimensions for UFF parser (can be specified multiple times)\n");
+    printf("  --input=<name>          Input blob name (can be specified multiple times)\n");
+    printf("  --model=<file>          Caffe model file (default = no model, random weights used)\n");
+    printf("  --batch=N               Set batch size (default = %d)\n", gParams.batchSize);
+    printf("  --device=N              Set cuda device to N (default = %d)\n", gParams.device);
+    printf("  --iterations=N          Run N iterations (default = %d)\n", gParams.iterations);
+    printf("  --avgRuns=N             Set avgRuns to N - perf is measured as an average of avgRuns (default=%d)\n", gParams.avgRuns);
+    printf("  --percentile=P          For each iteration, report the percentile time at P percentage (0<=P<=100, with 0 representing min, and 100 representing max; default = %.1f%%)\n", gParams.pct);
+    printf("  --workspace=N           Set workspace size in megabytes (default = %d)\n", gParams.workspaceSize);
+    printf("  --fp16                  Run in fp16 mode (default = false). Permits 16-bit kernels\n");
+    printf("  --int8                  Run in int8 mode (default = false). Currently no support for ONNX model.\n");
+    printf("  --verbose               Use verbose logging (default = false)\n");
+    printf("  --engine=<file>         Engine file to serialize to or deserialize from\n");
+    printf("  --calib=<file>          Read INT8 calibration cache file.  Currently no support for ONNX model.\n");
+    printf("  --useDLACore=N          Specify a DLA engine for layers that support DLA. Value can range from 0 to n-1, where n is the number of DLA engines on the platform.\n");
+    printf("  --allowGPUFallback      If --useDLACore flag is present and if a layer can't run on DLA, then run on GPU. \n");
     fflush(stdout);
 }
-void MemSet(float* SrcMem, int Size)
-{
-	for( int x =0 ; x < Size; x++)
-		SrcMem[x]=0.0f;
-}
+
 bool parseString(const char* arg, const char* name, std::string& value)
 {
     size_t n = strlen(name);
@@ -597,7 +496,6 @@ bool parseBool(const char* arg, const char* name, bool& value)
         value = true;
     }
     return match;
-
 }
 
 bool parseFloat(const char* arg, const char* name, float& value)
@@ -612,7 +510,6 @@ bool parseFloat(const char* arg, const char* name, float& value)
     return match;
 }
 
-
 bool parseArgs(int argc, char* argv[])
 {
     if (argc < 2)
@@ -623,23 +520,33 @@ bool parseArgs(int argc, char* argv[])
 
     for (int j = 1; j < argc; j++)
     {
-        if (parseString(argv[j], "model", gParams.modelFile) || parseString(argv[j], "deploy", gParams.deployFile) || parseString(argv[j], "engine", gParams.engine))
+        if (parseString(argv[j], "model", gParams.modelFile)
+            || parseString(argv[j], "deploy", gParams.deployFile)
+            || parseString(argv[j], "engine", gParams.engine))
             continue;
 
         if (parseString(argv[j], "uff", gParams.uffFile))
             continue;
 
         if (parseString(argv[j], "onnx", gParams.onnxModelFile))
+        {
+#ifdef _MSC_VER
+            std::cout << "ONNX is not supported on Windows." << std::endl;
+            exit(0);
+#endif
             continue;
+        }
 
         if (parseString(argv[j], "calib", gParams.calibrationCache))
             continue;
 
-        if (parseString(argv[j], "test", gParams.testList))
+        std::string input;
+        if (parseString(argv[j], "input", input))
+        {
+            gParams.inputs.push_back(input);
             continue;
+        }
 
-        if (parseString(argv[j], "label", gParams.label))
-            continue;
         std::string output;
         if (parseString(argv[j], "output", output))
         {
@@ -661,36 +568,47 @@ bool parseArgs(int argc, char* argv[])
             continue;
         }
 
-        if (parseInt(argv[j], "batch", gParams.batchSize) || parseInt(argv[j], "iterations", gParams.iterations) || parseInt(argv[j], "avgRuns", gParams.avgRuns)
-            || parseInt(argv[j], "device", gParams.device)  || parseInt(argv[j], "workspace", gParams.workspaceSize))
+        if (parseInt(argv[j], "batch", gParams.batchSize)
+            || parseInt(argv[j], "iterations", gParams.iterations)
+            || parseInt(argv[j], "avgRuns", gParams.avgRuns)
+            || parseInt(argv[j], "device", gParams.device)
+            || parseInt(argv[j], "workspace", gParams.workspaceSize)
+            || parseInt(argv[j], "useDLACore", gParams.useDLACore))
             continue;
 
         if (parseFloat(argv[j], "percentile", gParams.pct))
             continue;
 
-        if (parseBool(argv[j], "fp16", gParams.fp16) || parseBool(argv[j], "int8", gParams.int8)
-            || parseBool(argv[j], "verbose", gParams.verbose) || parseBool(argv[j], "hostTime", gParams.hostTime))
+        if (parseBool(argv[j], "fp16", gParams.fp16)
+            || parseBool(argv[j], "int8", gParams.int8)
+            || parseBool(argv[j], "verbose", gParams.verbose)
+            || parseBool(argv[j], "allowGPUFallback", gParams.allowGPUFallback))
             continue;
 
         printf("Unknown argument: %s\n", argv[j]);
         return false;
     }
+
     return true;
 }
 
 static ICudaEngine* createEngine()
 {
-    ICudaEngine *engine;
-    if ((!gParams.deployFile.empty()) || (!gParams.uffFile.empty()) || (!gParams.onnxModelFile.empty())) {
+    ICudaEngine* engine;
+    if ((!gParams.deployFile.empty()) || (!gParams.uffFile.empty()) || (!gParams.onnxModelFile.empty()))
+    {
 
         if (!gParams.uffFile.empty())
         {
             engine = uffToTRTModel();
         }
+// ONNX is not supported on Windows
+#ifndef _MSC_VER
         else if (!gParams.onnxModelFile.empty())
         {
             engine = onnxToTRTModel();
         }
+#endif
         else
         {
             engine = caffeToTRTModel();
@@ -710,7 +628,7 @@ static ICudaEngine* createEngine()
                 std::cerr << "could not open plan output file" << std::endl;
                 return nullptr;
             }
-            IHostMemory *ptr = engine->serialize();
+            IHostMemory* ptr = engine->serialize();
             assert(ptr);
             p.write(reinterpret_cast<const char*>(ptr->data()), ptr->size());
             ptr->destroy();
@@ -719,26 +637,35 @@ static ICudaEngine* createEngine()
     }
 
     // load directly from serialized engine file if deploy not specified
-    if (!gParams.engine.empty()) {
-        char *trtModelStream{nullptr};
+    if (!gParams.engine.empty())
+    {
+        std::vector<char> trtModelStream;
         size_t size{0};
         std::ifstream file(gParams.engine, std::ios::binary);
-        if (file.good()) {
+        if (file.good())
+        {
             file.seekg(0, file.end);
             size = file.tellg();
             file.seekg(0, file.beg);
-            trtModelStream = new char[size];
-            assert(trtModelStream);
-            file.read(trtModelStream, size);
+            trtModelStream.resize(size);
+            file.read(trtModelStream.data(), size);
             file.close();
         }
 
         IRuntime* infer = createInferRuntime(gLogger);
-        engine = infer->deserializeCudaEngine(trtModelStream, size, nullptr);
-        if (trtModelStream) delete [] trtModelStream;
+        if (gParams.useDLACore >= 0)
+        {
+            infer->setDLACore(gParams.useDLACore);
+        }
 
-        // assume input to be "data" for deserialized engine
-        gInputs.push_back("data");
+        engine = infer->deserializeCudaEngine(trtModelStream.data(), size, nullptr);
+
+        if (gParams.inputs.empty())
+        {
+            // Specify input blob name because user has not specified any
+            gParams.inputs.push_back("data");
+        }
+
         return engine;
     }
 
@@ -762,6 +689,8 @@ int main(int argc, char** argv)
         return -1;
     }
 
+    initLibNvInferPlugins(&gLogger, "");
+
     ICudaEngine* engine = createEngine();
     if (!engine)
     {
@@ -774,56 +703,9 @@ int main(int argc, char** argv)
     else if (gParams.deployFile.empty() && gParams.onnxModelFile.empty())
         nvuffparser::shutdownProtobufLibrary();
 
-    //CH OpenCV
-    size_t bindingIndex = engine->getBindingIndex(gInputs[0].c_str());
-    Dims3 dimensions = static_cast<Dims3&&>(engine->getBindingDimensions((int)bindingIndex));
-    size_t eltCount = dimensions.d[0]*dimensions.d[1]*dimensions.d[2]*gParams.batchSize, memSize = eltCount * sizeof(float);
-
-    std::ifstream fileList(gParams.testList.c_str());
-    std::string fileLine;
-    printf("File:%s\n",gParams.testList.c_str());
-    float* imgRow=(float*)malloc(memSize);
-
-    while (std::getline(fileList, fileLine))
-    {
-	MemSet(imgRow,eltCount);
-    	std::string imgFile;
-		std::istringstream getFile(fileLine);
-
-        if(!(getFile >> imgFile))
-        {
-		printf("Get file error..\n");
-		break;
-	}
-         
-    	cv::Mat SrcImage;
-    	SrcImage = cv::imread(imgFile, CV_LOAD_IMAGE_GRAYSCALE);
-        if(!SrcImage.empty()) 
-		printf("Success to decode image\n");
-	else
-		printf("Fail to decode image\n");
-
-		printf("Dim0: %d Dim1:%d Dim2:%d \n", dimensions.d[0],dimensions.d[1],dimensions.d[2]);
-    	cv::Mat imgFloat;
-	
-    	SrcImage.convertTo(imgFloat, CV_32F );
-	for(int c =0; c < dimensions.d[0];c++)
-	{
-    		for(int h =0;h<dimensions.d[1];h++)
-		{	
-			for(int w=0; w< dimensions.d[2];w++)
-			{
-			
-				imgRow[ c*dimensions.d[1]*dimensions.d[2]+ h*dimensions.d[1] + w ]=(float)imgFloat.at<float>(h,w);		
-				//printf("File %s (C,H,W) -> (%d,%d,%d)= %f \n",imgFile.c_str(),c,h,w,imgRow[ c*dimensions.d[1]*dimensions.d[2]+ h*dimensions.d[1] + w ]);
-			}
-		}
-	}
-    	doInference(*engine,imgRow);
-
-    }
+    doInference(*engine);
     engine->destroy();
-    free(imgRow);
+
     return 0;
 }
 
