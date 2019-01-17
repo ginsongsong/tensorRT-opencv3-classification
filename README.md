@@ -93,6 +93,7 @@ Install the cuda driver and the docker-ce version of 18.09.0.ce in ubuntu
 ```
 echo "blacklist nouveau" >> /etc/modprobe.d/nouveau.conf
 echo "options nouveau modeset=0" >> /etc/modprobe.d/nouveau.conf && update-initramfs -u &&reboot
+/etc/init.d/lightdm stop
 wget http://tw.download.nvidia.com/tesla/410.79/NVIDIA-Linux-x86_64-410.79.run -o cuda10_driver.run
 bash cuda10_driver.run  --accept-license --no-questions --no-opengl-files --no-drm
 sudo apt-get install apt-transport-https ca-certificates curl software-properties-common -y
