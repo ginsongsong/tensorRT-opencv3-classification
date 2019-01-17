@@ -1,0 +1,3 @@
+imgs/sunflower.jpg
+imgs/daffodil.jpg
+imgs/rose.jpg

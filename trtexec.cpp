@@ -16,9 +16,9 @@
 #include <vector>
 
 // ONNX is not supported in Windows
-#ifndef _MSC_VER
+
 #include "NvOnnxParser.h"
-#endif
+#include "NvOnnxConfig.h"
 #include "NvCaffeParser.h"
 #include "NvInfer.h"
 #include "NvInferPlugin.h"
@@ -33,7 +33,17 @@ using namespace nvuffparser;
 #ifndef _MSC_VER
 using namespace nvonnxparser;
 #endif
+/*CH----------start---------*/
+#include <string>
+#include <opencv2/core.hpp>
+#include <opencv2/imgcodecs.hpp>
+#include <opencv2/highgui.hpp>
+std::vector<string> labels_;
+//std::vector<std::string> gInputs;// add in params
 
+#define CHECKP //printf("%s(%d) check\n",__FILE__,__LINE__);
+
+/*CH-----------stop---------*/
 struct Params
 {
     std::string deployFile;
@@ -41,6 +51,10 @@ struct Params
     std::string engine;
     std::string calibrationCache{"CalibrationTable"};
     std::string uffFile;
+	/*CH----------start---------*/
+	std::string testList;
+	std::string label;
+	/*CH-----------stop---------*/
     std::string onnxModelFile;
     std::vector<std::string> inputs;
     std::vector<std::string> outputs;
@@ -379,19 +393,114 @@ void createMemory(const ICudaEngine& engine, std::vector<void*>& buffers, const 
 
     buffers[bindingIndex] = deviceMem;
 }
+/*CH----------start---------*/
+void createMemoryFromImage(const ICudaEngine& engine, std::vector<void*>& buffers, const std::string& name,float* imgFloatData)
+{
+    size_t bindingIndex = engine.getBindingIndex(name.c_str());
+    printf("name=%s, bindingIndex=%d, buffers.size()=%d\n", name.c_str(), (int)bindingIndex, (int)buffers.size());
+    assert(bindingIndex < buffers.size());
+    Dims3 dimensions = static_cast<Dims3&&>(engine.getBindingDimensions((int)bindingIndex));
+    size_t eltCount = dimensions.d[0]*dimensions.d[1]*dimensions.d[2]*gParams.batchSize, memSize = eltCount * sizeof(float);
+    float* localMem = new float[eltCount];
+    for (size_t i = 0; i < eltCount; i++)
+        {	
 
-void doInference(ICudaEngine& engine)
+		//localMem[i] = (float(rand()) / RAND_MAX) * 2 - 1;
+		localMem[i] = imgFloatData[i];
+		//printf("ImageData %f\n",localMem[i]);
+	}
+
+    void* deviceMem;
+    CHECK(cudaMalloc(&deviceMem, memSize));
+    if (deviceMem == nullptr)
+    {
+        std::cerr << "Out of memory" << std::endl;
+        exit(1);
+    }
+    CHECK(cudaMemcpy(deviceMem, localMem, memSize, cudaMemcpyHostToDevice));
+
+    delete[] localMem;
+    buffers[bindingIndex] = deviceMem;
+    printf("Memory Read...Image Ok\n");
+}
+void createMemorySetZero(const ICudaEngine& engine, std::vector<void*>& buffers, const std::string& name)
+{
+    size_t bindingIndex = engine.getBindingIndex(name.c_str());
+    printf("name=%s, bindingIndex=%d, buffers.size()=%d\n", name.c_str(), (int)bindingIndex, (int)buffers.size());
+    assert(bindingIndex < buffers.size());
+    Dims3 dimensions = static_cast<Dims3&&>(engine.getBindingDimensions((int)bindingIndex));
+    size_t eltCount = dimensions.d[0]*dimensions.d[1]*dimensions.d[2]*gParams.batchSize, memSize = eltCount * sizeof(float);
+
+    float* localMem = new float[eltCount];
+    for (size_t i = 0; i < eltCount; i++)
+        localMem[i] = 0;
+
+    void* deviceMem;
+    CHECK(cudaMalloc(&deviceMem, memSize));
+    if (deviceMem == nullptr)
+    {
+        std::cerr << "Out of memory" << std::endl;
+        exit(1);
+    }
+    CHECK(cudaMemcpy(deviceMem, localMem, memSize, cudaMemcpyHostToDevice));
+
+    delete[] localMem;
+    buffers[bindingIndex] = deviceMem;
+    //printf("Memory Set Zero... Ok\n");
+}
+bool sortBySec(const pair<string,float> &a, 
+               const pair<string,float> &b) 
+{ 
+    return (a.second > b.second); 
+} 
+void getMemory(const ICudaEngine& engine, std::vector<void*>& buffers, const std::string& name)
+{
+    size_t bindingIndex = engine.getBindingIndex(name.c_str());
+    printf("name=%s, bindingIndex=%d, buffers.size()=%d\n", name.c_str(), (int)bindingIndex, (int)buffers.size());
+    assert(bindingIndex < buffers.size());
+    Dims3 dimensions = static_cast<Dims3&&>(engine.getBindingDimensions((int)bindingIndex));
+    size_t eltCount = dimensions.d[0]*dimensions.d[1]*dimensions.d[2]*gParams.batchSize, memSize = eltCount * sizeof(float);
+    float* localMem = new float[eltCount];
+
+    CHECK(cudaMemcpy(localMem, buffers[bindingIndex], memSize, cudaMemcpyDeviceToHost));
+
+    CHECKP
+	std::vector< pair <string,float> >  predictions;
+	for (int x=0; x<  eltCount ; x++) 
+        predictions.push_back( make_pair(labels_[x],localMem[x]) ); 
+	std::sort(predictions.begin(), predictions.end(),sortBySec); 
+	
+	
+    //for(int x = 0; x < eltCount ; x++) 
+	printf("****Starting inference for new img***\n");
+	for(int x = 0; x < 5 ; x++)//top5
+    std::cout << "Output("<<predictions[x].first<<"): " << predictions[x].second<<  std::endl;
+    printf("*************************************\n");
+	CHECKP
+
+    delete[] localMem;
+}
+void MemSet(float* SrcMem, int Size)
+{
+	for( int x =0 ; x < Size; x++)
+		SrcMem[x]=0.0f;
+}
+
+void doInference(ICudaEngine& engine,float* imgFloatData)
 {
     IExecutionContext* context = engine.createExecutionContext();
     // input and output buffer pointers that we pass to the engine - the engine requires exactly IEngine::getNbBindings(),
     // of these, but in this case we know that there is exactly one input and one output.
 
+     //Create the input buffer for H2D 
     std::vector<void*> buffers(gParams.inputs.size() + gParams.outputs.size());
     for (size_t i = 0; i < gParams.inputs.size(); i++)
-        createMemory(engine, buffers, gParams.inputs[i]);
+        createMemoryFromImage(engine, buffers, gParams.inputs[i],imgFloatData);
+        //createMemoryForImage(engine, buffers, gParams.inputs[i],imgFloatData);
 
+    //Create the output buffer for H2D
     for (size_t i = 0; i < gParams.outputs.size(); i++)
-        createMemory(engine, buffers, gParams.outputs[i]);
+        createMemorySetZero(engine, buffers, gParams.outputs[i]);
 
     cudaStream_t stream;
     CHECK(cudaStreamCreate(&stream));
@@ -420,16 +529,19 @@ void doInference(ICudaEngine& engine)
         }
         totalGpu /= gParams.avgRuns;
         totalHost /= gParams.avgRuns;
-        std::cout << "Average over " << gParams.avgRuns << " runs is " << totalGpu << " ms (host walltime is " << totalHost
-                  << " ms, " << static_cast<int>(gParams.pct) << "\% percentile time is " << percentile(gParams.pct, times) << ")." << std::endl;
+        //std::cout << "Average over " << gParams.avgRuns << " runs is " << totalGpu << " ms (host walltime is " << totalHost
+        //          << " ms, " << static_cast<int>(gParams.pct) << "\% percentile time is " << percentile(gParams.pct, times) << ")." << std::endl;
     }
-
+	/*CH----------start---------*/
+    for (size_t i = 0; i < gParams.outputs.size(); i++)
+	getMemory(engine, buffers, gParams.outputs[i]);
+	/*CH-----------stop---------*/
     cudaStreamDestroy(stream);
     cudaEventDestroy(start);
     cudaEventDestroy(end);
     context->destroy();
 }
-
+/*CH-----------stop---------*/
 static void printUsage()
 {
     printf("\n");
@@ -554,6 +666,12 @@ bool parseArgs(int argc, char* argv[])
             continue;
         }
 
+		if (parseString(argv[j], "test", gParams.testList))
+            continue;
+
+        if (parseString(argv[j], "label", gParams.label))
+            continue;
+		
         std::string uffInput;
         if (parseString(argv[j], "uffInput", uffInput))
         {
@@ -691,6 +809,7 @@ int main(int argc, char** argv)
 
     initLibNvInferPlugins(&gLogger, "");
 
+    CHECKP
     ICudaEngine* engine = createEngine();
     if (!engine)
     {
@@ -703,9 +822,76 @@ int main(int argc, char** argv)
     else if (gParams.deployFile.empty() && gParams.onnxModelFile.empty())
         nvuffparser::shutdownProtobufLibrary();
 
-    doInference(*engine);
-    engine->destroy();
+    /*CH----------start---------*/
 
+    CHECKP
+    size_t bindingIndex = engine->getBindingIndex( gParams.inputs[0].c_str() );
+    CHECKP
+    Dims3 dimensions = static_cast<Dims3&&>(engine->getBindingDimensions((int)bindingIndex));
+    CHECKP
+    size_t eltCount = dimensions.d[0]*dimensions.d[1]*dimensions.d[2]*gParams.batchSize, memSize = eltCount * sizeof(float);
+
+    CHECKP
+    std::ifstream fileList(gParams.testList.c_str());
+    CHECKP
+    std::string fileLine;
+    float* imgRow=(float*)malloc(memSize);
+
+    //label
+
+    std::ifstream labels(gParams.label.c_str());
+    string line;
+    while (std::getline(labels, line))
+	labels_.push_back(string(line));
+
+
+
+    CHECKP
+    while (std::getline(fileList, fileLine))
+    {
+	MemSet(imgRow,eltCount);
+    	std::string imgFile;
+		std::istringstream getFile(fileLine);
+
+        if(!(getFile >> imgFile))
+        {
+		printf("Get file error..\n");
+		break;
+	}
+         
+    	cv::Mat SrcImage;
+    	SrcImage = cv::imread(imgFile, CV_LOAD_IMAGE_GRAYSCALE);
+        if(!SrcImage.empty()) 
+		printf("Success to decode image\n");
+	else
+		printf("Fail to decode image\n");
+
+	//	printf("Dim0: %d Dim1:%d Dim2:%d \n", dimensions.d[0],dimensions.d[1],dimensions.d[2]);
+    	cv::Mat imgFloat;
+	
+    	SrcImage.convertTo(imgFloat, CV_32F );
+		//printf("Image name: %s\n",imgFile);
+		
+		for(int c =0; c < dimensions.d[0];c++)
+		{
+				for(int h =0;h<dimensions.d[1];h++)
+			{	
+				for(int w=0; w< dimensions.d[2];w++)
+				{
+				
+					imgRow[ c*dimensions.d[1]*dimensions.d[2]+ h*dimensions.d[1] + w ]=(float)imgFloat.at<float>(h,w);		
+					//printf("File %s (C,H,W) -> (%d,%d,%d)= %f \n",imgFile.c_str(),c,h,w,imgRow[ c*dimensions.d[1]*dimensions.d[2]+ h*dimensions.d[1] + w ]);
+				}
+			}
+		}
+    	doInference(*engine,imgRow);
+
+    }
+    
+	/*CH-----------stop---------*/
+    engine->destroy();
+    free(imgRow);
     return 0;
 }
+
 
