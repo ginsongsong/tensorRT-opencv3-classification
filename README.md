@@ -1,4 +1,4 @@
-# TensorRT for image classification using OpenCV3 in caffemodel
+# TensorRT for image classification using OpenCV3
 TensorRT4.0 image classification using caffemodel
 
 
