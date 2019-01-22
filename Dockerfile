@@ -19,9 +19,7 @@ RUN  apt-get install libprotobuf-dev libleveldb-dev libsnappy-dev  \
 #Build the Calibration for inference.
 WORKDIR /Model
 #RUN mkdir cv3
-RUN git clone https://github.com/BVLC/caffe.git && cd caffe && \
-	git checkout 473f143f9422e7fc66e9590da6b2a1bb88e50b2f && \
-	patch -p1 < /workspace/tensorrt/samples/sampleINT8/int8_caffe.patch && \
+RUN git clone https://github.com/ginsongsong/caffe_int8.git caffe && cd caffe && \
 	mkdir build && cd build && cmake -DCPU_ONLY=ON -DBUILD_python=OFF -DUSE_OPENCV=FALSE -DUSE_CUDNN=OFF .. && \
 	make -j$(nproc)  
 	
