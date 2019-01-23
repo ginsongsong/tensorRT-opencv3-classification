@@ -6,7 +6,7 @@ WORKDIR /Model
 RUN apt-get update&&apt-get install cmake  -y 
 RUN rm -rf pencv-3.4.0 &&  wget https://github.com/opencv/opencv/archive/3.4.0.zip && unzip 3.4.0.zip && \
 	cd opencv-3.4.0 && mkdir build && cd build && \
-	cmake -DCMAKE_INSTALL_PREFIX=/Model/cv3 -D WITH_CUDA=OFF .. && \
+	cmake  -D WITH_CUDA=OFF .. && \
 	make -j$(nproc) && make install
 RUN cp /workspace/tensorrt/samples/trtexec/giexec ./
 
@@ -20,7 +20,7 @@ RUN  apt-get install libprotobuf-dev libleveldb-dev libsnappy-dev  \
 WORKDIR /Model
 #RUN mkdir cv3
 RUN git clone https://github.com/ginsongsong/caffe_int8.git caffe && cd caffe && \
-	mkdir build && cd build && cmake -DCPU_ONLY=ON -DBUILD_python=OFF -DUSE_OPENCV=FALSE -DUSE_CUDNN=OFF .. && \
+	mkdir build && cd build && cmake -DCPU_ONLY=ON -DBUILD_python=OFF  -DUSE_CUDNN=OFF .. && \
 	make -j$(nproc)  
 	
 	
