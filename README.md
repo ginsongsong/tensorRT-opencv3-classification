@@ -69,11 +69,13 @@ Output(moon orchid): 0.000453752
 
 Install the cuda driver and docker-ce version of 18.09.0.ce in CentOS/RHel
 ```
+#CUDA Driver & toolkit(optional)
 echo "blacklist nouveau" >> /etc/modprobe.d/nouveau.conf
 echo "options nouveau modeset=0" >> /etc/modprobe.d/nouveau.conf &&dracut -f && reboot
 systemctl isolate multi-user.target
 wget http://tw.download.nvidia.com/tesla/410.79/NVIDIA-Linux-x86_64-410.79.run -o cuda10_driver.run
 bash cuda10_driver.run  --accept-license --no-questions --no-opengl-files --no-drm
+#Docker installation
 sudo yum-config-manager --add-repo  https://download.docker.com/linux/centos/docker-ce.repo
 sudo yum install docker-ce-18.09.0.ce-1.el7.centos
 # Add the package repositories
@@ -91,11 +93,13 @@ systemctl start docker
 ```
 Install the cuda driver and the docker-ce version of 18.09.0.ce in ubuntu
 ```
+#Cuda driver and Toolkit(optional)
 echo "blacklist nouveau" >> /etc/modprobe.d/nouveau.conf
 echo "options nouveau modeset=0" >> /etc/modprobe.d/nouveau.conf && update-initramfs -u &&reboot
 /etc/init.d/lightdm stop
 wget http://tw.download.nvidia.com/tesla/410.79/NVIDIA-Linux-x86_64-410.79.run -o cuda10_driver.run
 bash cuda10_driver.run  --accept-license --no-questions --no-opengl-files --no-drm
+#Docker installation
 sudo apt-get install apt-transport-https ca-certificates curl software-properties-common -y
 curl -s -L https://nvidia.github.io/nvidia-docker/gpgkey | sudo apt-key add -
 distribution=$(. /etc/os-release;echo $ID$VERSION_ID)
@@ -103,7 +107,7 @@ curl -s -L https://nvidia.github.io/nvidia-docker/$distribution/nvidia-docker.li
   sudo tee /etc/apt/sources.list.d/nvidia-docker.list
 sudo apt-get update
 sudo add-apt-repository "deb [arch=amd64] https://download.docker.com/linux/ubuntu  $(lsb_release -cs)  stable"
-sudo apt-get install docker-ce=5:18.09.1~3-0~ubuntu-xenial -y
+sudo apt-get install docker-ce=5:18.09.1~3-0~ubuntu-xenial -y --allow-unauthenticated
 # Install nvidia-docker2 and reload the Docker daemon configuration
 sudo apt-get install -y nvidia-docker2
 
@@ -131,3 +135,4 @@ cd tensorRT-opencv3-classification
 docker build -t "ginsongsong/trt_cv3" .
 docker run --runtime=nvidia -it --rm -v /root/shared:/Model/shared ginsongsong/trt_cv3
 ```
+
