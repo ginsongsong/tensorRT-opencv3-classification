@@ -130,7 +130,7 @@ docker pull nvcr.io/nvidia/tensorrt:18.08-py3
 ```
 Login to you container
 ```
-git clone https://ginsongsong/tensorRT-opencv3-classification.git
+git clone https://github.com/ginsongsong/tensorRT-opencv3-classification.git
 cd tensorRT-opencv3-classification
 docker build -t "ginsongsong/trt_cv3" .
 docker run --runtime=nvidia -it --rm -v /root/shared:/Model/shared ginsongsong/trt_cv3
