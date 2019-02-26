@@ -10,7 +10,7 @@ else
         wget https://s3.amazonaws.com/jgoode/oxford102.caffemodel -P data/oxford102/
 fi
 make
-
+#
 file="./102flowers.tgz"
 if [ -f "$file" ]
 then
@@ -21,6 +21,15 @@ else
         wget http://www.robots.ox.ac.uk/~vgg/data/flowers/102/102flowers.tgz
         tar  -xvf 102flowers.tgz
         mv jpg/ flowers/
+fi
+#
+file="data/oxford102/test.prototxt"
+if [ -f "$file" ]
+then
+        echo "$file found."
+else
+        echo "$file not found."
+	cp test.prototxt data/oxford102/test.prototxt
 fi
 
 echo "Creating batches from legacy caffe..."
