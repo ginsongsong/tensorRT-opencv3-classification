@@ -1,0 +1,16 @@
+1
+norm2: 3f8be2fb
+conv5: 3f9b7e5a
+conv1: 40efe010
+pool5: 3fb20179
+pool1: 41463b7f
+conv3: 400d94fb
+pool2: 4041eaf3
+data: 4000890a
+conv2: 402b067e
+fc8_oxford_102: 3ea3a72b
+fc7: 3e1011b6
+conv4: 3f9fafca
+norm1: 3f8bc01a
+fc6: 3ed22d82
+prob: 3c010a14
