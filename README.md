@@ -79,7 +79,8 @@ Login to you container
 git clone https://github.com/ginsongsong/tensorRT-opencv3-classification.git
 cd tensorRT-opencv3-classification
 docker build -t "ginsongsong/trt_cv3" .
-docker run --runtime=nvidia -it --rm -v /root/shared:/Model/shared ginsongsong/trt_cv3
+cd ..
+docker run --runtime=nvidia -it --rm -v $PWD/tensorRT-opencv3-classification:/Model/shared ginsongsong/trt_cv3
 ```
 
 Create your own Calibration cache from sampleINT8
