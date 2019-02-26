@@ -26,12 +26,13 @@ else
 fi
 
 echo "Creating batches from legacy caffe..."
-export PATH=$PATH:/workspace/tensorrt/bin/
 mkdir batches
 export TENSORRT_INT8_BATCH_DIRECTORY=batches
 ln -s $PWD/batches $PWD/oxford102/batches
 caffe test  -iterations 1000 -model data/oxford102/test.prototxt -weights data/oxford102/oxford102.caffemodel
-
+#sampleINT8
+export PATH=$PATH:/workspace/tensorrt/bin/
+sample_int8 oxford102
 
 export PATH=$PATH:/Model/caffe/build/tools/
 LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/Model/cv3/lib 

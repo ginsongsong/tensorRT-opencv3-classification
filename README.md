@@ -82,3 +82,12 @@ docker build -t "ginsongsong/trt_cv3" .
 docker run --runtime=nvidia -it --rm -v /root/shared:/Model/shared ginsongsong/trt_cv3
 ```
 
+Create your own Calibration cache from sampleINT8
+```
+
+#default file format is data/"modelName"/"Your model and batches"
+sample_int8 "modelName"
+
+
+```
+
