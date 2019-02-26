@@ -1,6 +1,10 @@
 FROM nvcr.io/nvidia/tensorrt:18.12-py3
 MAINTAINER ginsongsong <ginsongsong@honghutech.com>
 
+
+WORKDIR /workspace/tensorrt/samples/sampleINT8
+RUN make
+
 #Build the Calibration for opencv3.
 WORKDIR /Model
 RUN apt-get update&&apt-get install cmake  -y 
