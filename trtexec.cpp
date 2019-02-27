@@ -422,6 +422,7 @@ void createMemoryFromImage(const ICudaEngine& engine, std::vector<void*>& buffer
     delete[] localMem;
     buffers[bindingIndex] = deviceMem;
     printf("Memory Read...Image Ok\n");
+    cudaFree(deviceMem);
 }
 void createMemorySetZero(const ICudaEngine& engine, std::vector<void*>& buffers, const std::string& name)
 {
