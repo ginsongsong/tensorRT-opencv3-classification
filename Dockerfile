@@ -8,7 +8,7 @@ RUN make
 #Build the Calibration for opencv3.
 WORKDIR /Model
 RUN apt-get update&&apt-get install cmake  -y 
-RUN rm -rf pencv-3.4.0 &&  wget https://github.com/opencv/opencv/archive/3.4.0.zip && unzip 3.4.0.zip && \
+RUN rm -rf opencv-3.4.0 &&  wget https://github.com/opencv/opencv/archive/3.4.0.zip && unzip 3.4.0.zip && \
 	cd opencv-3.4.0 && mkdir build && cd build && \
 	cmake  -D WITH_CUDA=OFF .. && \
 	make -j$(nproc) && make install
