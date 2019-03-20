@@ -880,7 +880,7 @@ int main(int argc, char** argv)
 				for(int w=0; w< dimensions.d[2];w++)
 				{
 				
-					imgRow[ c*dimensions.d[1]*dimensions.d[2]+ h*dimensions.d[1] + w ]=(float)imgFloat.at<float>(h,w);		
+					imgRow[ c*dimensions.d[1]*dimensions.d[2]+ h*dimensions.d[1] + w ]=(float)imgFloat.at<float>(c*dimensions.d[1]*dimensions.d[2]+ h*dimensions.d[1] + ws);		
 					//printf("File %s (C,H,W) -> (%d,%d,%d)= %f \n",imgFile.c_str(),c,h,w,imgRow[ c*dimensions.d[1]*dimensions.d[2]+ h*dimensions.d[1] + w ]);
 				}
 			}
